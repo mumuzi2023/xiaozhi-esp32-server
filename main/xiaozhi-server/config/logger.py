@@ -5,7 +5,7 @@ from config.config_loader import load_config
 from config.settings import check_config_file
 from datetime import datetime
 
-SERVER_VERSION = "0.7.1"
+SERVER_VERSION = "0.8.8"
 _logger_initialized = False
 
 
@@ -31,6 +31,7 @@ def build_module_string(selected_module):
         + get_module_abbreviation("TTS", selected_module)
         + get_module_abbreviation("Memory", selected_module)
         + get_module_abbreviation("Intent", selected_module)
+        + get_module_abbreviation("VLLM", selected_module)
     )
 
 
@@ -56,8 +57,10 @@ def setup_logging():
         # 使用默认的模块字符串进行初始化
         logger.configure(
             extra={
-                "selected_module": "00000000000000"})
-        
+                "selected_module": log_config.get("selected_module", "00000000000000"),
+            }
+        )
+
         log_format = log_config.get(
             "log_format",
             "<green>{time:YYMMDD HH:mm:ss}</green>[{version}_{extra[selected_module]}][<light-blue>{extra[tag]}</light-blue>]-<level>{level}</level>-<light-green>{message}</light-green>",
@@ -109,4 +112,3 @@ def setup_logging():
 def create_connection_logger(selected_module_str):
     """为连接创建独立的日志器，绑定特定的模块字符串"""
     return logger.bind(selected_module=selected_module_str)
-

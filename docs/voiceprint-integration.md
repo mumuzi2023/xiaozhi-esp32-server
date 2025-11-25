@@ -1,8 +1,9 @@
 # 声纹识别启用指南
 
-本教程包含2个部分
+本教程包含3个部分
 - 1、如何部署声纹识别这个服务
 - 2、全模块部署时，怎么配置声纹识别接口
+- 3、最简化部署时，怎么配置声纹识别
 
 # 1、如何部署声纹识别这个服务
 
@@ -15,7 +16,99 @@
 点击它，下载本项目源码压缩包。下载到你电脑后，解压它，此时它的名字可能叫`voiceprint-api-main`
 你需要把它重命名成`voiceprint-api`。
 
-## 第二步，启动程序
+## 第二步， 创建数据库和表
+
+声纹识别需要依赖`mysql`数据库。如果你之前已经部署`智控台`，说明你已经安装了`mysql`。你可以共用它。
+
+你可以你试一下在宿主机使用`telnet`命令，看看能不能正常访问`mysql`的`3306`端口。
+```
+telnet 127.0.0.1 3306
+```
+如果能访问到3306端口，请忽略以下的内容，直接进入第三步。
+
+如果不能访问，你需要回忆一下，你的`mysql`是怎么安装的。
+
+如果你的mysql是通过自己使用安装包安装的，说明你的`mysql`做了网络隔离。你可能先解决访问`mysql`的`3306`端口这个问题。
+
+如果你`mysql`是通过本项目的`docker-compose_all.yml`安装的。你需要找一下你当时创建数据库的`docker-compose_all.yml`文件，修改以下的内容
+
+修改前
+```
+  xiaozhi-esp32-server-db:
+    ...
+    networks:
+      - default
+    expose:
+      - "3306:3306"
+```
+
+修改后
+```
+  xiaozhi-esp32-server-db:
+    ...
+    networks:
+      - default
+    ports:
+      - "3306:3306"
+```
+
+注意是将`xiaozhi-esp32-server-db`下面的`expose`改成`ports`。改完后，需要重新启动。以下是重启mysql的命令：
+
+```
+# 进入你docker-compose_all.yml所在的文件夹，例如我的是xiaozhi-server
+cd xiaozhi-server
+docker compose -f docker-compose_all.yml down
+docker compose -f docker-compose.yml up -d
+```
+
+启动完后，在宿主机再使用`telnet`命令，看看能不能正常访问`mysql`的`3306`端口。
+```
+telnet 127.0.0.1 3306
+```
+正常来说这样就可以访问的了。
+
+## 第三步， 创建数据库和表
+如果你的宿主机，能正常访问mysql数据库，那就在mysql上创建一个名字为`voiceprint_db`的数据库和`voiceprints`表。
+
+```
+CREATE DATABASE voiceprint_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+USE voiceprint_db;
+
+CREATE TABLE voiceprints (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    speaker_id VARCHAR(255) NOT NULL UNIQUE,
+    feature_vector LONGBLOB NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_speaker_id (speaker_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+```
+
+## 第四步， 配置数据库连接
+
+进入`voiceprint-api`文件夹，创建名字为`data`的文件夹。
+
+把`voiceprint-api`根目录里的`voiceprint.yaml`，复制到`data`的文件夹，将它重命名为`.voiceprint.yaml`
+
+接下来，你需要重点配置一下`.voiceprint.yaml`里的数据库连接。
+
+```
+mysql:
+  host: "127.0.0.1"
+  port: 3306
+  user: "root"
+  password: "your_password"
+  database: "voiceprint_db"
+```
+
+注意！由于你的声纹识别服务是使用docker部署，`host`需要填写成你`mysql所在机器的局域网ip`。
+
+注意！由于你的声纹识别服务是使用docker部署，`host`需要填写成你`mysql所在机器的局域网ip`。
+
+注意！由于你的声纹识别服务是使用docker部署，`host`需要填写成你`mysql所在机器的局域网ip`。
+
+## 第五步，启动程序
 这个项目是一个很简单的项目，建议使用docker运行。不过如果你不想使用docker运行，你可以参考[这个页面](https://github.com/xinnan-tech/voiceprint-api/blob/main/README.md)使用源码运行。以下是docker运行的方法
 
 ```
@@ -94,3 +187,47 @@ http://192.168.1.25:8005/voiceprint/health?key=abcd
 ## 第三步 和你的智能体聊天
 
 将你的设备通电，问它，你知道我是谁吗？如果他能回答得出，说明声纹识别功能正常。
+
+# 3、最简化部署时，怎么配置声纹识别
+
+## 第一步 配置接口
+打开 `xiaozhi-server/data/.config.yaml` 文件（如果没有需要创建），然后添加/修改以下内容：
+
+```
+# 声纹识别配置
+voiceprint:
+  # 声纹接口地址
+  url: 你的声纹接口地址
+  # 说话人配置：speaker_id,名称,描述
+  speakers:
+    - "test1,张三,张三是一个程序员"
+    - "test2,李四,李四是一个产品经理"
+    - "test3,王五,王五是一个设计师"
+```
+
+把上一步得来的 `声纹接口地址` 粘贴到 `url` 里。然后保存。
+
+`speakers` 参数依据需求添加。这里需要注意这个 `speaker_id` 参数，后面注册声纹会用到。
+
+## 第二步 注册声纹
+如果你已经启动了声纹服务，本地浏览器里访问 `http://localhost:8005/voiceprint/docs` 即可查看 API 文档，这里只说明注册声纹的 API 如何使用。
+
+注册声纹的 API 地址为 `http://localhost:8005/voiceprint/register`，请求方式为 POST。
+
+请求头需要包含 Bearer Token 认证，token 为 `声纹接口地址` 中 `?key=` 后的部分，比如如果我的声纹注册地址为 `http://127.0.0.1:8005/voiceprint/health?key=abcd`，那么我的 token 就是`abcd`。
+
+请求体包含说话人 ID（speaker_id），和 WAV 音频文件（file），请求示例如下：
+
+```
+curl -X POST \
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
+  -F "speaker_id=your_speaker_id_here" \
+  -F "file=@/path/to/your/file" \
+  http://localhost:8005/voiceprint/register
+```
+
+ 这里的 `file` 是要注册的说话人说话的音频文件， `speaker_id` 需要和第一步配置接口的 `speaker_id` 保持一致。比如说我需要注册张三的声纹，在 `.config.yaml` 中填的张三的 `speaker_id` 为 `test1`，那么我注册张三声纹的时候，请求体里填的 `speaker_id` 就是 `test1`， `file` 填的就是张三说一段话的音频文件。
+
+ ## 第三步 启动服务
+
+启动小智服务器和声纹服务，即可正常使用。

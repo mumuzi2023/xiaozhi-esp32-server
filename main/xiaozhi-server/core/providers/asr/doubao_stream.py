@@ -4,6 +4,7 @@ import uuid
 import asyncio
 import websockets
 import opuslib_next
+import gc
 from core.providers.asr.base import ASRProviderBase
 from config.logger import setup_logging
 from core.providers.asr.dto.dto import InterfaceType
@@ -56,6 +57,16 @@ class ASRProvider(ASRProviderBase):
     async def receive_audio(self, conn, audio, audio_have_voice):
         conn.asr_audio.append(audio)
         conn.asr_audio = conn.asr_audio[-10:]
+        
+        # 存储音频数据
+        if not hasattr(conn, 'asr_audio_for_voiceprint'):
+            conn.asr_audio_for_voiceprint = []
+        conn.asr_audio_for_voiceprint.append(audio)
+        
+        # 当没有音频数据时处理完整语音片段
+        if not audio and len(conn.asr_audio_for_voiceprint) > 0:
+            await self.handle_voice_stop(conn, conn.asr_audio_for_voiceprint)
+            conn.asr_audio_for_voiceprint = []
 
         # 如果本次有声音，且之前没有建立连接
         if audio_have_voice and self.asr_ws is None and not self.is_processing:
@@ -148,6 +159,8 @@ class ASRProvider(ASRProviderBase):
     async def _forward_asr_results(self, conn):
         try:
             while self.asr_ws and not conn.stop_event.is_set():
+                # 获取当前连接的音频数据
+                audio_data = getattr(conn, 'asr_audio_for_voiceprint', [])
                 try:
                     response = await self.asr_ws.recv()
                     result = self.parse_response(response)
@@ -171,7 +184,8 @@ class ASRProvider(ASRProviderBase):
                                 logger.bind(tag=TAG).error(f"识别文本：空")
                                 self.text = ""
                                 conn.reset_vad_states()
-                                await self.handle_voice_stop(conn, None)
+                                if len(audio_data) > 15:  # 确保有足够音频数据
+                                    await self.handle_voice_stop(conn, audio_data)
                                 break
 
                             for utterance in utterances:
@@ -181,7 +195,8 @@ class ASRProvider(ASRProviderBase):
                                         f"识别到文本: {self.text}"
                                     )
                                     conn.reset_vad_states()
-                                    await self.handle_voice_stop(conn, None)
+                                    if len(audio_data) > 15:  # 确保有足够音频数据
+                                        await self.handle_voice_stop(conn, audio_data)
                                     break
                         elif "error" in payload:
                             error_msg = payload.get("error", "未知错误")
@@ -208,6 +223,13 @@ class ASRProvider(ASRProviderBase):
                 await self.asr_ws.close()
                 self.asr_ws = None
             self.is_processing = False
+            if conn:
+                if hasattr(conn, 'asr_audio_for_voiceprint'):
+                    conn.asr_audio_for_voiceprint = []
+                if hasattr(conn, 'asr_audio'):
+                    conn.asr_audio = []
+                if hasattr(conn, 'has_valid_voice'):
+                    conn.has_valid_voice = False
 
     def stop_ws_connection(self):
         if self.asr_ws:
@@ -349,3 +371,22 @@ class ASRProvider(ASRProviderBase):
                 pass
             self.forward_task = None
         self.is_processing = False
+        
+        # 显式释放decoder资源
+        if hasattr(self, 'decoder') and self.decoder is not None:
+            try:
+                del self.decoder
+                self.decoder = None
+                logger.bind(tag=TAG).debug("Doubao decoder resources released")
+            except Exception as e:
+                logger.bind(tag=TAG).debug(f"释放Doubao decoder资源时出错: {e}")
+
+        # 清理所有连接的音频缓冲区
+        if hasattr(self, '_connections'):
+            for conn in self._connections.values():
+                if hasattr(conn, 'asr_audio_for_voiceprint'):
+                    conn.asr_audio_for_voiceprint = []
+                if hasattr(conn, 'asr_audio'):
+                    conn.asr_audio = []
+                if hasattr(conn, 'has_valid_voice'):
+                    conn.has_valid_voice = False
