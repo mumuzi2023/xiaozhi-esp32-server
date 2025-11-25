@@ -39,5 +39,7 @@ EXPOSE 8002
 
 # 启动脚本
 COPY docs/docker/start.sh /start.sh
+# 在 Dockerfile 中转换行尾符
+RUN sed -i 's/\r$//' /start.sh
 RUN chmod +x /start.sh
 CMD ["/start.sh"]
